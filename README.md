@@ -1,0 +1,1 @@
+Micro-frontend Multizone application architecture
