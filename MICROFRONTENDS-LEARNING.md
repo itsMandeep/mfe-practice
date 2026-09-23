@@ -1,5 +1,7 @@
 # Microfrontends — Learning Summary
 
+Application URL - https://mfe-router.mfe-router.workers.dev/
+
 A revision guide covering the route-based microfrontend architecture used at KGeN, the practice project that reproduces it (`mfe-practice`), and every infrastructure component involved.
 
 ---
@@ -16,14 +18,14 @@ A revision guide covering the route-based microfrontend architecture used at KGe
 
 ## 2. Microfrontend types (know all, explain why you chose one)
 
-| Type | How it works | Pros | Cons | When to use |
-|---|---|---|---|---|
-| **Route-based / Multi-Zones** *(what we used)* | Each app owns a path; edge/proxy routes by path | Simplest, true independent deploys, failure isolation | Full reload across apps, duplicated React bundles | Apps map cleanly to sections of the site |
-| **Module Federation** | Host app loads remote components at runtime (Webpack/Rspack/Vite plugin) | Multiple teams on one page, shared deps | Runtime coupling, version mismatch risk, complex | Dashboards with widgets from many teams |
-| **single-spa** | JS orchestrator mounts different apps (even different frameworks) per route | Mix frameworks | Extra orchestration layer | Migrating between frameworks |
-| **iframes** | Each app in an iframe | Strongest isolation | Poor UX, SEO, sizing, communication | Embedding third-party / legacy apps |
-| **Web Components** | Apps expose custom elements | Framework-agnostic | Styling/SSR challenges | Shared widgets across stacks |
-| **Server-side composition / ESI** | Server stitches HTML fragments from services | Fast first paint, SEO | Infra-heavy | Large content/e-commerce sites |
+| Type                                           | How it works                                                                | Pros                                                  | Cons                                              | When to use                              |
+| ---------------------------------------------- | --------------------------------------------------------------------------- | ----------------------------------------------------- | ------------------------------------------------- | ---------------------------------------- |
+| **Route-based / Multi-Zones** _(what we used)_ | Each app owns a path; edge/proxy routes by path                             | Simplest, true independent deploys, failure isolation | Full reload across apps, duplicated React bundles | Apps map cleanly to sections of the site |
+| **Module Federation**                          | Host app loads remote components at runtime (Webpack/Rspack/Vite plugin)    | Multiple teams on one page, shared deps               | Runtime coupling, version mismatch risk, complex  | Dashboards with widgets from many teams  |
+| **single-spa**                                 | JS orchestrator mounts different apps (even different frameworks) per route | Mix frameworks                                        | Extra orchestration layer                         | Migrating between frameworks             |
+| **iframes**                                    | Each app in an iframe                                                       | Strongest isolation                                   | Poor UX, SEO, sizing, communication               | Embedding third-party / legacy apps      |
+| **Web Components**                             | Apps expose custom elements                                                 | Framework-agnostic                                    | Styling/SSR challenges                            | Shared widgets across stacks             |
+| **Server-side composition / ESI**              | Server stitches HTML fragments from services                                | Fast first paint, SEO                                 | Infra-heavy                                       | Large content/e-commerce sites           |
 
 **Mobile (React Native)** has no URL-based edge routing. Options: feature modules in a monorepo (most common), Re.Pack / Module Federation for RN (runtime remote bundles), or WebViews embedding web zones.
 
@@ -32,27 +34,34 @@ A revision guide covering the route-based microfrontend architecture used at KGe
 ## 3. Multi-Zones in detail
 
 ### 3.1 `basePath`
+
 ```ts
 // apps/gamer/next.config.ts
 const nextConfig = {
-  basePath: '/gamer',
-  transpilePackages: ['@mfe/ui'],
+  basePath: "/gamer",
+  transpilePackages: ["@mfe/ui"],
 };
 ```
+
 What it does:
+
 - Pages served under `/gamer/...` (`localhost:3001/` → 404, `/gamer` → works).
 - Static assets become `/gamer/_next/static/...` → **no collision** with other apps' `/_next/...`, so the router can send all `/gamer/*` traffic (pages + assets) to one app.
 
 ### 3.2 Navigation rules
+
 - **Inside a zone:** `next/link` with `href="/profile"` (basePath is prepended automatically) → client-side navigation.
 - **Across zones:** `<a href="/">` or `<a href="/gamer">` → full page load (separate React trees, no shared router).
 
 ### 3.3 Gotcha (common interview question)
+
 `next/link`, `next/router`, `next/image` add basePath automatically. **Raw `<img src="/logo.png">` and `fetch('/api/x')` do NOT** — prefix manually (`/gamer/logo.png`) or use an env like `NEXT_PUBLIC_BASE_PATH`.
 
 ### 3.4 Where routing can live
+
 1. **Edge / proxy** (KGeN + practice): Cloudflare Worker / rules, Nginx, ALB, K8s Ingress.
 2. **Home app rewrites** (official Next Multi-Zones approach):
+
 ```ts
 // apps/home/next.config.ts
 async rewrites() {
@@ -64,6 +73,7 @@ async rewrites() {
 ```
 
 ### 3.5 Shared concerns
+
 - **UI consistency:** shared design system package (monorepo workspace package, or versioned private npm package).
 - **Auth:** cookie set on the root domain (`kgen.io`) → readable by every zone (same origin).
 - **State:** cannot share in-memory state across zones → use cookies, URL, or backend.
@@ -71,12 +81,12 @@ async rewrites() {
 
 ### 3.6 Trade-offs
 
-| Pros | Cons |
-|---|---|
-| Independent deploys & rollbacks per team | Full reload when crossing zones |
-| Each app can upgrade Next/React independently | React + shared libs downloaded per zone |
+| Pros                                            | Cons                                                   |
+| ----------------------------------------------- | ------------------------------------------------------ |
+| Independent deploys & rollbacks per team        | Full reload when crossing zones                        |
+| Each app can upgrade Next/React independently   | React + shared libs downloaded per zone                |
 | Failure isolation (`/gamer` down, `/` still up) | Header/footer drift unless shared package kept in sync |
-| Simple mental model, no runtime integration | Cross-zone state needs cookies/URL/backend |
+| Simple mental model, no runtime integration     | Cross-zone state needs cookies/URL/backend             |
 
 **Monorepo vs npm package for shared UI:** monorepo = everyone always on latest (but every app must redeploy to ship it); npm package = teams upgrade on their own schedule (but UI can drift).
 
@@ -94,39 +104,48 @@ EDGE      Cloudflare (DNS, TLS, WAF, path routing, Workers)
 ```
 
 ### 4.1 Code layer
+
 **pnpm workspaces (monorepo)**
+
 - One repo, many packages; `pnpm-workspace.yaml` lists `apps/*`, `packages/*`. Local packages are symlinked (`node_modules/@mfe/ui → ../../packages/ui`).
 - `pnpm -r --parallel dev` → run the `dev` script in every package that has one, all at once (dev servers never exit, so sequential would hang).
 - Alternatives: npm/Yarn workspaces, **Turborepo**, **Nx** (task caching, "affected" builds), polyrepo.
 - At scale: remote build caching, affected-only builds, Bazel-like systems at very large companies.
 
 **Shared UI package (`@mfe/ui`)**
+
 - `transpilePackages: ['@mfe/ui']` makes Next compile raw TS from a workspace package.
 - At scale: Storybook, visual regression tests (Chromatic), design tokens, semver.
 
 ### 4.2 Build layer
+
 **Next.js** — framework; `next build` compiles pages, applies basePath, **inlines `NEXT_PUBLIC_*` env values into JS**, outputs hashed static files.
 
 **Turbopack** — Rust bundler used by recent Next versions (default for `next dev`). Alternatives: Webpack, Vite, Rspack, esbuild, Parcel. Why it matters at scale: dev startup + CI build time = developer productivity.
 
 **Docker**
+
 - Packages app + Node + deps into an **image**; runs identically anywhere as a **container**.
 - **Docker Compose** = define multi-container setups in one YAML (local dev tool).
 - Typical Next Dockerfile is multi-stage: `deps` → `builder` (receives `--build-arg` envs, runs `next build`) → small `runner` (`node server.js` with standalone output).
 - Alternatives: Podman. At scale: images run on Kubernetes / ECS / Cloud Run.
 
 ### 4.3 Local infra
+
 **Nginx (reverse proxy)** — forwards requests to other servers by rules:
+
 ```nginx
 location /gamer  { proxy_pass http://host.docker.internal:3001; }
 location /quests { proxy_pass http://host.docker.internal:3002; }
 location /       { proxy_pass http://host.docker.internal:3000; }
 ```
+
 (No path after the port → full path forwarded unchanged. Upgrade headers needed for dev hot reload websockets.)
 Alternatives: Caddy, Traefik, HAProxy, Envoy. At scale: K8s ingress controllers, ALB path rules, TLS termination, load balancing, rate limiting.
 
 ### 4.4 Hosting
-**Vercel** — builds Next, runs server code as serverless functions, serves static via CDN. One project per app via *Root Directory*. Alternatives: Netlify, Cloudflare (OpenNext), AWS Amplify, self-hosted containers.
+
+**Vercel** — builds Next, runs server code as serverless functions, serves static via CDN. One project per app via _Root Directory_. Alternatives: Netlify, Cloudflare (OpenNext), AWS Amplify, self-hosted containers.
 
 **AWS compute**
 | | What | Who manages running containers |
@@ -138,21 +157,25 @@ Alternatives: Caddy, Traefik, HAProxy, Envoy. At scale: K8s ingress controllers,
 **ECR** — private image registry (GitHub for images). CI pushes, servers pull. Versioned tags → rollback.
 
 **ALB (Application Load Balancer)** — step by step:
+
 1. Request hits ALB address (forwarded from Cloudflare/CloudFront).
 2. **Listener** (port 443) terminates TLS.
 3. **Rules** (path/host/header) → pick a **target group** (e.g. `/gamer/*` → `gamer-tg`).
 4. **Health checks** remove unhealthy targets.
 5. Request goes to a healthy target (round-robin).
 6. Response flows back.
-During deploys: new targets registered → pass health checks → old targets **drained** → zero downtime.
+   During deploys: new targets registered → pass health checks → old targets **drained** → zero downtime.
 
 ### 4.5 CDN
+
 - Caches static files near users. Hashed filenames (`abc123.js`) → long cache lifetimes, no stale-asset problem on deploy.
 - **CloudFront** (AWS), with **S3** as storage for uploaded assets (images etc.). Can either sit in front of the ALB (caching `_next/static`) or serve assets from S3 via `assetPrefix`.
 - Alternatives: Cloudflare CDN, Fastly, Akamai, Vercel's built-in CDN.
 
 ### 4.6 Edge
+
 **Cloudflare**
+
 - DNS for the domain, TLS, DDoS/WAF/bot protection, caching, **path routing** to origins.
 - **Workers** = code running inside Cloudflare's network (V8 isolates, near-instant cold starts).
 - Config-only alternatives: Cloudflare Origin Rules, CloudFront behaviors, Next rewrites. Code alternatives: Lambda@Edge / CloudFront Functions, Fastly Compute, Akamai EdgeWorkers, Vercel Edge Middleware.
@@ -163,6 +186,7 @@ During deploys: new targets registered → pass health checks → old targets **
 **DNS** — maps names to servers; new subdomains can take minutes to propagate.
 
 ### 4.7 CI/CD
+
 - **CI** (checks): lint, typecheck, build, tests — per changed app (`dorny/paths-filter` + matrix; or `nx affected` / `turbo --filter`).
 - **CD** (deploy): Vercel Git integration / Jenkins job / Wrangler deploy.
 - Alternatives: **Jenkins** (self-hosted), GitHub Actions, GitLab CI, CircleCI, Buildkite.
@@ -175,11 +199,11 @@ During deploys: new targets registered → pass health checks → old targets **
 
 `NEXT_PUBLIC_*` values are **baked into the JS bundle at `next build`**.
 
-| Build-time env (KGeN) | Runtime env ("build once, deploy many") |
-|---|---|
-| Simple, works out of the box | One image promoted dev → staging → prod |
-| One image per environment | Config injected at container start (`window.__ENV`, server-read config) |
-| Config change = rebuild | Config change = restart |
+| Build-time env (KGeN)        | Runtime env ("build once, deploy many")                                 |
+| ---------------------------- | ----------------------------------------------------------------------- |
+| Simple, works out of the box | One image promoted dev → staging → prod                                 |
+| One image per environment    | Config injected at container start (`window.__ENV`, server-read config) |
+| Config change = rebuild      | Config change = restart                                                 |
 
 Server-only env vars (no `NEXT_PUBLIC_`) can be read at runtime.
 
@@ -236,29 +260,30 @@ Cluster
  └── Ingress    → "/gamer → gamer service" (backed by ALB / Nginx)
 ```
 
-| Term | Meaning | ≈ AWS/ECS |
-|---|---|---|
-| Cluster | Control plane + worker machines | ECS cluster |
-| Node | One VM in the cluster | EC2 instance |
-| Pod | Smallest running unit (your container) | Task |
-| Deployment | Desired replicas + rolling updates | ECS service |
-| Service | Stable name, load-balances pods | Target group |
-| Ingress | External routing rules | ALB rules |
+| Term       | Meaning                                | ≈ AWS/ECS    |
+| ---------- | -------------------------------------- | ------------ |
+| Cluster    | Control plane + worker machines        | ECS cluster  |
+| Node       | One VM in the cluster                  | EC2 instance |
+| Pod        | Smallest running unit (your container) | Task         |
+| Deployment | Desired replicas + rolling updates     | ECS service  |
+| Service    | Stable name, load-balances pods        | Target group |
+| Ingress    | External routing rules                 | ALB rules    |
 
 **What DevOps phrases mean**
-- *"3 pods are up"* → all desired replicas running & healthy (normal).
-- *"Pod is down / not running"* → container failing:
 
-| Status | Meaning | Typical cause |
-|---|---|---|
+- _"3 pods are up"_ → all desired replicas running & healthy (normal).
+- _"Pod is down / not running"_ → container failing:
+
+| Status             | Meaning                  | Typical cause                        |
+| ------------------ | ------------------------ | ------------------------------------ |
 | `CrashLoopBackOff` | Starts, crashes, repeats | Startup bug, missing env, bad config |
-| `ImagePullBackOff` | Can't download image | Wrong tag, registry auth |
-| `OOMKilled` | Killed for memory | Leak / limit too low |
-| `Pending` | No node has room | Cluster out of CPU/memory |
-| Running, not Ready | Readiness check failing | App hung, dependency down |
+| `ImagePullBackOff` | Can't download image     | Wrong tag, registry auth             |
+| `OOMKilled`        | Killed for memory        | Leak / limit too low                 |
+| `Pending`          | No node has room         | Cluster out of CPU/memory            |
+| Running, not Ready | Readiness check failing  | App hung, dependency down            |
 
-- *"Ingress issue"* → pods fine, routing broken (path rule, TLS cert, controller down) → 404/502.
-- *"Cluster is not running"* → all apps in the cluster affected.
+- _"Ingress issue"_ → pods fine, routing broken (path rule, TLS cert, controller down) → 404/502.
+- _"Cluster is not running"_ → all apps in the cluster affected.
 
 **Triage from outside in:** Cloudflare/DNS → Ingress/ALB → Service/pods Ready → pod logs → backend APIs/DB.
 
@@ -286,28 +311,30 @@ mfe-practice/
   .github/workflows/ci.yml → per-app CI + Worker deploy
 ```
 
-| Step | What | KGeN equivalent |
-|---|---|---|
-| 1–3 | Monorepo + 3 Next apps with basePath | 8 Next apps |
-| 4 | Shared UI package | Design system |
-| 5 | Nginx in Docker on :8080 | Cloudflare routing (local stand-in) |
-| 6 | Push to GitHub | Git repo |
-| 7 | 3 Vercel projects (Root Directory per app) + Ignored Build Step | Jenkins job + EC2 per app |
-| 8 | Cloudflare Worker router on workers.dev | Cloudflare on kgen.io |
-| 9 | GitHub Actions (paths-filter, matrix, wrangler deploy) | Jenkins pipelines |
-| 10 | *(next)* Shared auth cookie, RN WebView shell | — |
+| Step | What                                                            | KGeN equivalent                     |
+| ---- | --------------------------------------------------------------- | ----------------------------------- |
+| 1–3  | Monorepo + 3 Next apps with basePath                            | 8 Next apps                         |
+| 4    | Shared UI package                                               | Design system                       |
+| 5    | Nginx in Docker on :8080                                        | Cloudflare routing (local stand-in) |
+| 6    | Push to GitHub                                                  | Git repo                            |
+| 7    | 3 Vercel projects (Root Directory per app) + Ignored Build Step | Jenkins job + EC2 per app           |
+| 8    | Cloudflare Worker router on workers.dev                         | Cloudflare on kgen.io               |
+| 9    | GitHub Actions (paths-filter, matrix, wrangler deploy)          | Jenkins pipelines                   |
+| 10   | _(next)_ Shared auth cookie, RN WebView shell                   | —                                   |
 
 **Worker router (core logic)**
+
 ```ts
 const prefix = Object.keys(ZONES).find(
-  p => url.pathname === p || url.pathname.startsWith(p + '/'),
+  (p) => url.pathname === p || url.pathname.startsWith(p + "/"),
 );
 const origin = prefix ? ZONES[prefix] : HOME;
 const target = new URL(url.pathname + url.search, origin);
-return fetch(new Request(target, request), { redirect: 'manual' });
+return fetch(new Request(target, request), { redirect: "manual" });
 ```
 
 **Verification checklist**
+
 - `localhost:3001/` → 404, `/gamer` → works (basePath).
 - Assets load from `/gamer/_next/static/...`.
 - Cross-zone click = new document request; in-zone click = no reload.
@@ -315,6 +342,7 @@ return fetch(new Request(target, request), { redirect: 'manual' });
 - Change only gamer → only gamer rebuilds/deploys.
 
 **Gotchas hit along the way**
+
 - `create-next-app --use-pnpm` creates a `pnpm-workspace.yaml` + lockfile **inside each app** → workspace can't find `@mfe/ui`. Fix: delete them, keep only the root workspace file (move settings like `allowBuilds` to root).
 - zsh globbing: quote `"@mfe/ui@workspace:*"`.
 - `npx` fails with `EBADDEVENGINES` because root `package.json` declares pnpm in `devEngines` → use `pnpm dlx`.
